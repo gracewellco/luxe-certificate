@@ -10,6 +10,7 @@ import {
 } from './lib/generateCertificate';
 import { layoutName, normalizeName } from './lib/nameLayout';
 import { type RenderedTemplate, renderTemplate } from './lib/renderTemplate';
+import { savePdf } from './lib/savePdf';
 
 /** Preview resolution (px). High enough to stay crisp on large/retina screens. */
 const PREVIEW_PIXEL_WIDTH = 2400;
@@ -60,6 +61,25 @@ export default function App() {
   const ready = assets !== null && template !== null;
   const shrunk = layout !== null && layout.fontSize < CERTIFICATE_CONFIG.preferredFontSize;
 
+  // Build the PDF in the background once typing pauses, so a tap on Download
+  // can save it synchronously — iOS rejects saves that start after an await.
+  const prepared = useRef<{ name: string; bytes: Uint8Array } | null>(null);
+  useEffect(() => {
+    if (!assets || !layout || prepared.current?.name === name) return;
+    let cancelled = false;
+    const timer = setTimeout(() => {
+      generateCertificate(name, assets)
+        .then((bytes) => {
+          if (!cancelled) prepared.current = { name, bytes };
+        })
+        .catch(() => {}); // surfaced when the user clicks a button instead
+    }, 350);
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, [assets, layout, name]);
+
   async function run(kind: Exclude<Busy, null>) {
     if (!ready || busy) return;
     setNotice(null);
@@ -69,27 +89,26 @@ export default function App() {
       return;
     }
 
-    // Open the tab synchronously (inside the click) so popup blockers allow it.
-    const previewTab = kind === 'preview' ? window.open('', '_blank') : null;
+    const filename = buildCertificateFilename(name);
+    const cached = prepared.current?.name === name ? prepared.current.bytes : null;
+    // Without a ready PDF, open the tab now (inside the click) so popup blockers allow it.
+    const previewTab = kind === 'preview' && !cached ? window.open('', '_blank') : null;
     setBusy(kind);
     try {
-      const bytes = await generateCertificate(name, assets);
-      const url = URL.createObjectURL(new Blob([bytes as BlobPart], { type: 'application/pdf' }));
-      const filename = buildCertificateFilename(name);
+      // No await when the PDF is already prepared: keeps the user gesture alive.
+      const bytes = cached ?? (await generateCertificate(name, assets));
+      prepared.current = { name, bytes };
 
       if (kind === 'preview') {
+        const url = URL.createObjectURL(new Blob([bytes as BlobPart], { type: 'application/pdf' }));
         if (previewTab) previewTab.location.href = url;
-        else window.location.assign(url);
+        else if (!window.open(url, '_blank')) window.location.assign(url);
         setTimeout(() => URL.revokeObjectURL(url), 60_000);
       } else {
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = filename;
-        document.body.appendChild(a);
-        a.click();
-        a.remove();
-        setTimeout(() => URL.revokeObjectURL(url), 10_000);
-        setNotice({ kind: 'success', text: `Downloaded ${filename}` });
+        const result = await savePdf(bytes, filename);
+        if (result !== 'cancelled') {
+          setNotice({ kind: 'success', text: `${result === 'shared' ? 'Saved' : 'Downloaded'} ${filename}` });
+        }
       }
     } catch (err) {
       previewTab?.close();
