@@ -109,9 +109,15 @@ export async function generateCertificate(
   const { templateBytes, fontBytes } = assets ?? (await loadCertificateAssets());
   const name = validateRecipientName(recipientName, fontBytes);
 
-  const pdfDoc = await PDFDocument.load(templateBytes);
+  // The master file contains an incremental update (a generation-1 catalog),
+  // which pdf-lib re-saves with a broken xref. Copying the page into a fresh
+  // document renumbers every object cleanly; the page content and artwork
+  // streams are carried over byte-for-byte.
+  const template = await PDFDocument.load(templateBytes);
+  const pdfDoc = await PDFDocument.create();
   pdfDoc.registerFontkit(fontkit);
-  const page = pdfDoc.getPage(0);
+  const [page] = await pdfDoc.copyPages(template, [0]);
+  pdfDoc.addPage(page);
   const { width: pageWidth } = page.getSize();
 
   const layout = layoutName(parseFont(fontBytes), name, pageWidth);
@@ -119,6 +125,8 @@ export async function generateCertificate(
 
   // Invisible copy of the name in the embedded font, so the certificate text
   // stays searchable/selectable. The visible name is the gradient outline above.
+  // Subset (not full) embed: only the subset gets a ToUnicode map that covers the
+  // font's contextual alternates, so copy/search returns the right letters.
   const embeddedFont = await pdfDoc.embedFont(fontBytes, { subset: true });
   page.drawText(name, {
     x: layout.originX,
