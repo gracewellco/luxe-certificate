@@ -1,0 +1,12 @@
+@import 'tailwindcss';
+
+@theme {
+  --color-gold: rgb(190 143 42);
+  --color-champagne: rgb(246 215 155);
+}
+
+:root {
+  color-scheme: dark;
+  font-family: ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}

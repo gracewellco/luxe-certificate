@@ -1,0 +1,5 @@
+node_modules
+dist
+sample-output
+*.tsbuildinfo
+.DS_Store
